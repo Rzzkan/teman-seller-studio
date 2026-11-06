@@ -24,7 +24,8 @@ export async function signedUrl(entry, { ttlMinutes = 60 } = {}) {
     throw new Error('PUBLIC_URL (HTTPS) belum diatur. Social Hub hanya bisa mengambil gambar dari URL HTTPS publik, jadi Studio perlu di-deploy dulu (butuh persetujuan Owner) dan PUBLIC_URL diisi di .env.');
   }
   const ttl = Math.min(Math.max(1, Math.floor(ttlMinutes)), 1440);
-  const exp = Math.min(Date.now() + ttl * 60000, new Date(entry.expiresAt).getTime());
+  const cap = entry.expiresAt ? new Date(entry.expiresAt).getTime() : Infinity; // gambar bertanda simpan tidak punya batas kedaluwarsa
+  const exp = Math.min(Date.now() + ttl * 60000, cap);
   const expSec = Math.floor(exp / 1000);
   const ext = entry.file.split('.').pop();
   return { url: `${config.publicUrl}/p/${entry.id}.${ext}?exp=${expSec}&sig=${await mac(entry.id, expSec)}`, expiresAt: new Date(expSec * 1000).toISOString() };

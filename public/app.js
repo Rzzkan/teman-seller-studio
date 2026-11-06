@@ -56,6 +56,12 @@ function tile(e) {
   img.loading = 'lazy'; img.src = `/files/${encodeURIComponent(e.file)}${tq()}`; img.alt = e.prompt || e.file;
   img.className = 'aspect-square w-full bg-graylight object-cover dark:bg-bodydark';
   btn.append(img);
+  if (e.client || e.keep) {
+    const tags = document.createElement('div'); tags.className = 'flex flex-wrap gap-1 px-3 pt-2';
+    if (e.client) tags.append(Object.assign(document.createElement('span'), { className: 'rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-white', textContent: e.client }));
+    if (e.keep) tags.append(Object.assign(document.createElement('span'), { className: 'rounded-full bg-success px-2 py-0.5 text-[10px] font-medium text-white', textContent: 'Disimpan' }));
+    btn.after(tags);
+  }
   const name = document.createElement('div');
   name.className = 'line-clamp-2 break-all px-3 pt-2 text-xs font-medium leading-snug text-bodydark dark:text-white'; name.textContent = e.file; name.title = e.file;
   const url = document.createElement('button');
@@ -72,7 +78,8 @@ function openLightbox(e) {
   $('#lb-url').textContent = fileUrl(e);
   $('#lb-img').src = `/files/${encodeURIComponent(e.file)}${tq()}`;
   const left = e.expiresAt ? Math.max(0, Math.ceil((new Date(e.expiresAt) - Date.now()) / 86400000)) : null;
-  $('#lb-meta').textContent = `${e.model} · ${rp(e.costIdr)}${left !== null ? ` · dihapus permanen ${left} hari lagi` : ''}`;
+  $('#lb-meta').textContent = `${e.client ? `Klien ${e.client} · ` : ''}${e.model} · ${rp(e.costIdr)}${e.keep ? ' · disimpan permanen (tidak dihapus otomatis)' : left !== null ? ` · dihapus permanen ${left} hari lagi` : ''}`;
+  $('#lb-keep').textContent = e.keep ? 'Lepas simpan permanen' : 'Simpan permanen';
   $('#lb-prompt').textContent = e.prompt ? `Prompt: ${e.prompt}` : '';
   $('#lb-dl').href = `/files/${encodeURIComponent(e.file)}${tq()}`; $('#lb-dl').download = e.file;
   $('#lb-msg').textContent = '';
@@ -125,6 +132,8 @@ async function loadDash() {
 async function loadBudget() {
   await refreshConfig();
   const { settings } = await api('/settings');
+  $('#s-cdaily').value = settings.clientDailyBudgetIdr; $('#s-cmonthly').value = settings.clientMonthlyBudgetIdr;
+  $('#client-usage').replaceChildren(...(cfg.byClient.length ? cfg.byClient.map((c) => Object.assign(document.createElement('div'), { className: 'flex justify-between border-b border-stroke py-1.5 dark:border-strokedark', textContent: `${c.client}: hari ini ${rp(c.today)} · bulan ini ${rp(c.month)}` })) : [Object.assign(document.createElement('p'), { className: 'text-xs', textContent: 'Belum ada biaya yang tercatat atas nama klien.' })]));
   $('#s-daily').value = settings.dailyBudgetIdr; $('#s-weekly').value = settings.weeklyBudgetIdr; $('#s-monthly').value = settings.monthlyBudgetIdr;
   $('#s-approval').value = settings.approvalThresholdIdr; $('#s-maxn').value = settings.maxN;
   const rows = [['Hari ini', cfg.spentTodayIdr, cfg.dailyBudgetIdr], [`Minggu ini (sejak ${cfg.weekStart})`, cfg.spentWeekIdr, cfg.weeklyBudgetIdr], [`Bulan ini (sejak ${cfg.monthStart})`, cfg.spentMonthIdr, cfg.monthlyBudgetIdr]];
@@ -277,25 +286,41 @@ function initFallback() {
   $('#l-issues').onchange = loadLogs;
 }
 
-/* ---------- style guide jamak ---------- */
-let styleList = [], editingId = null;
-function fillStylePickers() {
-  const others = styleList.filter((x) => !x.base);
-  const opt = (v, t) => Object.assign(document.createElement('option'), { value: v, textContent: t });
-  const base = styleList.find((x) => x.base);
-  const first = base ? `Hanya gaya dasar (${base.name})` : 'Tanpa style tambahan';
-  $('#g-style-pick').replaceChildren(opt('', first), ...others.map((x) => opt(x.name, x.pillar && x.pillar !== x.name ? `${x.name} (${x.pillar})` : x.name)));
-  $('#e-style-pick').replaceChildren(opt('__none', 'Tanpa Style Guide'), opt('', first), ...others.map((x) => opt(x.name, x.name)));
+/* ---------- style guide jamak (per klien) ---------- */
+let styleList = [], clientList = [], editingId = null;
+const opt = (v, t) => Object.assign(document.createElement('option'), { value: v, textContent: t });
+const sameC = (a, b) => (a || '').toLowerCase() === (b || '').toLowerCase();
+// Pemilih style mengikuti klien yang dipilih: klien dipilih = hanya style milik klien itu (gaya Teman Seller tidak ikut).
+function fillStylePickers(p) {
+  for (const x of p ? [p] : ['g', 'e']) {
+    const client = $(`#${x}-client`).value;
+    const mine = styleList.filter((s) => sameC(s.client, client));
+    const others = mine.filter((s) => !s.base);
+    const base = mine.find((s) => s.base);
+    const first = base ? `Hanya gaya dasar (${base.name})` : client ? `Klien ${client} belum punya gaya dasar` : 'Tanpa style tambahan';
+    const pick = $(`#${x}-style-pick`);
+    pick.replaceChildren(...(x === 'e' ? [opt('__none', 'Tanpa Style Guide')] : []), opt('', first), ...others.map((s) => opt(s.name, s.pillar && s.pillar !== s.name ? `${s.name} (${s.pillar})` : s.name)));
+  }
+  $('#g-style-label').textContent = $('#g-client').value ? `Pakai Style Guide klien ${$('#g-client').value}` : 'Pakai Style Guide Teman Seller';
+}
+function fillClientSelects() {
+  const keep = { g: $('#g-client').value, e: $('#e-client').value, gal: $('#gal-client').value, st: $('#st-filter').value };
+  for (const x of ['g', 'e']) $(`#${x}-client`).replaceChildren(opt('', 'Teman Seller (internal)'), ...clientList.map((c) => opt(c, c)));
+  $('#gal-client').replaceChildren(opt('', 'Semua klien'), opt('-', 'Teman Seller (internal)'), ...clientList.map((c) => opt(c, c)));
+  $('#st-filter').replaceChildren(opt('', 'Teman Seller (internal)'), ...clientList.map((c) => opt(c, c)));
+  for (const [id, k] of [['g-client', 'g'], ['e-client', 'e'], ['gal-client', 'gal'], ['st-filter', 'st']]) if ([...$(`#${id}`).options].some((o) => o.value === keep[k])) $(`#${id}`).value = keep[k];
+  $('#st-clients').replaceChildren(...clientList.map((c) => Object.assign(document.createElement('option'), { value: c })));
 }
 function editStyle(st) {
   editingId = st?.id || null;
   $('#st-title').textContent = st ? `Ubah: ${st.name}` : 'Style baru';
+  $('#st-client').value = st ? st.client || '' : $('#st-filter').value; $('#st-client').disabled = Boolean(st);
   $('#st-name').value = st?.name || ''; $('#st-pillar').value = st?.pillar || ''; $('#st-text').value = st?.text || ''; $('#st-base').checked = Boolean(st?.base);
   $('#st-del').classList.toggle('hidden', !st); $('#st-msg').textContent = '';
   renderStyleList();
 }
 function renderStyleList() {
-  const rows = styleList.map((st) => {
+  const rows = styleList.filter((st) => sameC(st.client, $('#st-filter').value)).map((st) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = `block w-full rounded-lg border p-3 text-left text-sm hover:border-primary ${st.id === editingId ? 'border-primary' : 'border-stroke dark:border-strokedark'}`;
@@ -308,18 +333,21 @@ function renderStyleList() {
     return b;
   });
   $('#st-list').replaceChildren(...rows);
-  if (!rows.length) $('#st-list').textContent = 'Belum ada style. Klik "+ Style baru" atau "Buat dari 7 Content Pillar".';
+  if (!rows.length) $('#st-list').textContent = $('#st-filter').value ? `Klien ${$('#st-filter').value} belum punya style. Klik "+ Style baru" dan buat gaya dasarnya dulu.` : 'Belum ada style. Klik "+ Style baru" atau "Buat dari 7 Content Pillar".';
+  $('#st-seed').classList.toggle('hidden', Boolean($('#st-filter').value));
 }
 async function loadStyles(keepEditing = true) {
   const r = await api('/styles');
-  styleList = r.styles;
+  styleList = r.styles; clientList = r.clients;
   $('#st-pillars').replaceChildren(...r.pillars.map((p) => Object.assign(document.createElement('option'), { value: p })));
-  fillStylePickers();
+  fillClientSelects(); fillStylePickers();
   const cur = keepEditing ? styleList.find((x) => x.id === editingId) : null;
   editStyle(cur || null);
 }
 function initStyles() {
   $('#st-new').onclick = () => editStyle(null);
+  $('#st-filter').onchange = () => editStyle(null);
+  for (const x of ['g', 'e']) $(`#${x}-client`).onchange = () => { fillStylePickers(x); estimate(x); };
   $('#st-seed').onclick = async () => {
     const r = await api('/styles/seed-pillars', { method: 'POST', body: '{}' });
     $('#st-seed-msg').textContent = r.added.length ? `Ditambahkan ${r.added.length} draf pilar. Periksa dan ubah sesuai selera, lalu setujui sebagai Owner.` : 'Semua pilar sudah ada.';
@@ -327,10 +355,12 @@ function initStyles() {
   };
   $('#st-save').onclick = async () => {
     const msg = $('#st-msg');
-    const body = { name: $('#st-name').value, pillar: $('#st-pillar').value, text: $('#st-text').value, base: $('#st-base').checked };
+    const body = { client: $('#st-client').value, name: $('#st-name').value, pillar: $('#st-pillar').value, text: $('#st-text').value, base: $('#st-base').checked };
     try {
       const saved = editingId ? await api(`/styles/${editingId}`, { method: 'PUT', body: JSON.stringify(body) }) : await api('/styles', { method: 'POST', body: JSON.stringify(body) });
-      editingId = saved.id; await loadStyles(); msg.className = OK; msg.textContent = 'Tersimpan.';
+      editingId = saved.id; await loadStyles();
+      if (saved.client && $('#st-filter').value !== saved.client) { $('#st-filter').value = saved.client; renderStyleList(); }
+      msg.className = OK; msg.textContent = 'Tersimpan.';
     } catch (e) { msg.className = ERR; msg.textContent = e.message; }
   };
   $('#st-del').onclick = async () => {
@@ -341,11 +371,12 @@ function initStyles() {
 }
 
 async function estimate(prefix) {
-  const model = $(`#${prefix}-model`).value, n = $(`#${prefix}-n`).value || 1;
+  const model = $(`#${prefix}-model`).value, n = $(`#${prefix}-n`).value || 1, client = $(`#${prefix}-client`).value;
   if (!model) return;
   try {
-    const e = await api(`/estimate?model=${encodeURIComponent(model)}&n=${n}`);
+    const e = await api(`/estimate?model=${encodeURIComponent(model)}&n=${n}&client=${encodeURIComponent(client)}`);
     const sisa = [e.remainingTodayIdr, e.remainingWeekIdr, e.remainingMonthIdr].filter((v) => v !== null);
+    if (e.client) { if (e.clientDailyBudgetIdr > 0) sisa.push(Math.max(0, e.clientDailyBudgetIdr - e.spentClientTodayIdr)); if (e.clientMonthlyBudgetIdr > 0) sisa.push(Math.max(0, e.clientMonthlyBudgetIdr - e.spentClientMonthIdr)); }
     $(`#${prefix}-est`).textContent = `Estimasi: ${e.n} × ${rp(e.pricePerImageIdr)} = ${rp(e.totalIdr)}. ` + (sisa.length ? `Sisa budget terendah ${rp(Math.min(...sisa))}.` : 'Tanpa batas budget.') + (e.needsApproval ? ' Butuh persetujuan Owner (melewati ambang).' : '');
     $(`#${prefix}-appr-wrap`).hidden = !e.needsApproval;
   } catch (err) { $(`#${prefix}-est`).textContent = err.message; }
@@ -364,7 +395,8 @@ async function run(prefix, path, payload, outId) {
 }
 
 async function loadGallery() {
-  const items = await api(`/gallery?q=${encodeURIComponent($('#q').value)}`);
+  const f = $('#gal-client').value; // '' semua, '-' hanya Teman Seller, selain itu nama klien
+  const items = await api(`/gallery?q=${encodeURIComponent($('#q').value)}${f ? `&client=${encodeURIComponent(f)}` : ''}`);
   $('#gal-grid').replaceChildren(...items.map(tile));
   if (!items.length) $('#gal-grid').textContent = 'Belum ada gambar.';
 }
@@ -385,6 +417,13 @@ async function init() {
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeLightbox(); });
   $('#lb-edit').onclick = () => pickEdit(current);
   $('#lb-copy').onclick = () => copy(fileUrl(current), $('#lb-msg'));
+  $('#lb-keep').onclick = async () => {
+    try {
+      const r = await api(`/gallery/${current.id}/keep`, { method: 'PUT', body: JSON.stringify({ keep: !current.keep }) });
+      current = r; openLightbox(r); $('#lb-msg').textContent = r.keep ? 'Gambar tidak akan dihapus otomatis. Tetap simpan salinan di Drive klien.' : 'Tanda simpan dilepas; hitung mundur 7 hari dimulai.';
+      if (location.hash === '#gal') loadGallery();
+    } catch (err) { $('#lb-msg').textContent = err.message; }
+  };
   $('#lb-share').onclick = async () => {
     try { const r = await api('/share', { method: 'POST', body: JSON.stringify({ id: current.id, ttlMinutes: 60 }) }); await copy(r.url, $('#lb-msg'), `Tautan publik disalin (berlaku sampai ${new Date(r.expiresAt).toLocaleString('id-ID')})`); }
     catch (err) { $('#lb-msg').textContent = err.message; }
@@ -405,7 +444,7 @@ async function init() {
   for (const p of ['g', 'e']) { $(`#${p}-model`).onchange = () => estimate(p); $(`#${p}-n`).oninput = () => estimate(p); estimate(p); }
   $('#g-go').onclick = () => run('g', '/generate', {
     prompt: $('#g-prompt').value, model: $('#g-model').value, n: Number($('#g-n').value) || 1, size: $('#g-size').value || undefined,
-    title: $('#g-title').value || undefined, background: $('#g-opaque').checked ? 'transparent' : undefined, useStyle: $('#g-style').checked, style: $('#g-style-pick').value || undefined, approved: $('#g-appr').checked,
+    title: $('#g-title').value || undefined, background: $('#g-opaque').checked ? 'transparent' : undefined, useStyle: $('#g-style').checked, style: $('#g-style-pick').value || undefined, client: $('#g-client').value || undefined, approved: $('#g-appr').checked,
   }, '#g-out');
   $('#g-five').onclick = () => { $('#g-n').value = Math.min(5, cfg.maxN); estimate('g'); };
   $('#e-file').onchange = async (ev) => {
@@ -416,17 +455,18 @@ async function init() {
   $('#e-go').onclick = () => {
     if (!editSource) { $('#e-msg').className = ERR; $('#e-msg').textContent = 'Pilih gambar sumber dulu.'; return; }
     run('e', '/edit', { prompt: $('#e-prompt').value, model: $('#e-model').value, n: Number($('#e-n').value) || 1, title: $('#e-title').value || undefined,
-      sourceId: editSource.sourceId, imageBase64: editSource.imageBase64, approved: $('#e-appr').checked, useStyle: $('#e-style-pick').value !== '__none', style: ['', '__none'].includes($('#e-style-pick').value) ? undefined : $('#e-style-pick').value }, '#e-out');
+      sourceId: editSource.sourceId, imageBase64: editSource.imageBase64, client: $('#e-client').value || undefined, approved: $('#e-appr').checked, useStyle: $('#e-style-pick').value !== '__none', style: ['', '__none'].includes($('#e-style-pick').value) ? undefined : $('#e-style-pick').value }, '#e-out');
   };
   $('#q').oninput = () => loadGallery();
+  $('#gal-client').onchange = () => loadGallery();
   initStyles();
-  styleList = (await api('/styles')).styles; fillStylePickers();
+  { const r = await api('/styles'); styleList = r.styles; clientList = r.clients; fillClientSelects(); fillStylePickers(); }
 
   $('#budget-form').onsubmit = async (ev) => {
     ev.preventDefault();
     const msg = $('#budget-msg');
     try {
-      await api('/settings', { method: 'PUT', body: JSON.stringify({ dailyBudgetIdr: Number($('#s-daily').value), weeklyBudgetIdr: Number($('#s-weekly').value), monthlyBudgetIdr: Number($('#s-monthly').value), approvalThresholdIdr: Number($('#s-approval').value), maxN: Number($('#s-maxn').value) }) });
+      await api('/settings', { method: 'PUT', body: JSON.stringify({ dailyBudgetIdr: Number($('#s-daily').value), weeklyBudgetIdr: Number($('#s-weekly').value), monthlyBudgetIdr: Number($('#s-monthly').value), clientDailyBudgetIdr: Number($('#s-cdaily').value), clientMonthlyBudgetIdr: Number($('#s-cmonthly').value), approvalThresholdIdr: Number($('#s-approval').value), maxN: Number($('#s-maxn').value) }) });
       msg.className = OK; msg.textContent = 'Batas biaya tersimpan dan langsung berlaku.'; await loadBudget(); estimate('g'); estimate('e');
     } catch (e) { msg.className = ERR; msg.textContent = e.message; }
   };

@@ -91,3 +91,8 @@ docs/SPEC.md    spesifikasi
 1. OAuth untuk connector Claude.ai.
 2. Template prompt per format (feed 4:5, story, carousel, thumbnail) dari Library Prompt Kenzo.
 3. Mask editor di tab Edit.
+
+## Layanan klien (multi-klien)
+- **Style Guide per klien**: parameter `client` di `set_style_guide`, `list_style_guides`, dll. Klien dipilih = hanya Style Guide klien itu yang dipakai (gaya Teman Seller tidak ikut); tiap klien punya satu gaya dasar.
+- **Galeri & biaya per klien**: `generate_image`/`edit_image` menerima `client`; galeri bisa difilter; `list_clients` merekap style, gambar, dan biaya. Batas harian/bulanan per klien diatur Owner di Dashboard > Batas Biaya.
+- **Simpan permanen**: `keep_image` (atau tombol di galeri) mengecualikan gambar dari retensi 7 hari. Arsip jangka panjang tetap di folder Drive klien.

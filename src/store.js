@@ -50,7 +50,7 @@ async function writeIndex(entries) {
  */
 async function ensureLedger() {
   if (existsSync(ledgerFile())) return;
-  const rows = (await readIndex()).filter((e) => e.costIdr > 0).map((e) => ({ at: e.createdAt, date: e.date, costIdr: e.costIdr, model: e.model, batch: e.batch }));
+  const rows = (await readIndex()).filter((e) => e.costIdr > 0).map((e) => ({ at: e.createdAt, date: e.date, costIdr: e.costIdr, model: e.model, batch: e.batch, client: e.client || '' }));
   await writeFile(ledgerFile(), rows.map((r) => JSON.stringify(r) + '\n').join(''));
 }
 async function readLedger() {
@@ -62,11 +62,27 @@ export function weekStartOf(dateStr) { // Senin pekan berjalan (WIB)
   const back = (d.getUTCDay() + 6) % 7;
   return new Date(d.getTime() - back * 86400000).toISOString().slice(0, 10);
 }
-export async function usage() {
-  const rows = await readLedger();
+const sameClient = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+// usage() = total semua; usage(client) = hanya klien itu ('' = Teman Seller sendiri).
+export async function usage(client) {
+  const rows = (await readLedger()).filter((r) => client === undefined || sameClient(r.client, client));
   const today = wibDate(), ws = weekStartOf(today), ms = today.slice(0, 8) + '01';
   const sum = (f) => rows.filter(f).reduce((a, r) => a + (r.costIdr || 0), 0);
   return { today: sum((r) => r.date === today), week: sum((r) => r.date >= ws), month: sum((r) => r.date >= ms), weekStart: ws, monthStart: ms };
+}
+// Rekap biaya per klien (hari ini + bulan berjalan) untuk laporan/tagihan internal. Teman Seller sendiri = '' dan tidak ikut daftar.
+export async function usageByClient() {
+  const rows = (await readLedger()).filter((r) => r.client);
+  const today = wibDate(), ms = today.slice(0, 8) + '01';
+  const out = new Map();
+  for (const r of rows) {
+    const k = r.client.trim();
+    const o = out.get(k.toLowerCase()) || { client: k, today: 0, month: 0 };
+    if (r.date === today) o.today += r.costIdr || 0;
+    if (r.date >= ms) o.month += r.costIdr || 0;
+    out.set(k.toLowerCase(), o);
+  }
+  return [...out.values()].sort((a, b) => b.month - a.month);
 }
 
 export async function init() {
@@ -105,6 +121,8 @@ export function saveBatch({ images, meta }) {
         size: meta.size || null,
         source: meta.source || 'web',
         style: meta.style || null,
+        client: meta.client || '',
+        keep: false,
         // biaya dibagi rata per gambar; biaya batch dicatat di gambar pertama agar total tetap akurat
         costIdr: i === 0 ? meta.costIdr : 0,
         batch: `${prefix}_v${version}`,
@@ -113,17 +131,33 @@ export function saveBatch({ images, meta }) {
       saved.push(entry);
     }
     await writeIndex(entries);
-    if (meta.costIdr > 0) await appendFile(ledgerFile(), JSON.stringify({ at: new Date().toISOString(), date, costIdr: meta.costIdr, model: meta.model, batch: `${prefix}_v${version}` }) + '\n');
+    if (meta.costIdr > 0) await appendFile(ledgerFile(), JSON.stringify({ at: new Date().toISOString(), date, costIdr: meta.costIdr, model: meta.model, batch: `${prefix}_v${version}`, client: meta.client || '' }) + '\n');
     return saved;
   });
 }
 
 const expiryOf = (e) => new Date(e.expiresAt || new Date(e.createdAt).getTime() + config.retentionDays * 86400000);
-export const isExpired = (e, now = Date.now()) => expiryOf(e).getTime() <= now;
-export const withExpiry = (e) => ({ ...e, expiresAt: expiryOf(e).toISOString() });
+// Gambar bertanda "simpan" (keep) tidak ikut retensi: expiresAt null, tidak pernah disapu.
+export const isExpired = (e, now = Date.now()) => !e.keep && expiryOf(e).getTime() <= now;
+export const withExpiry = (e) => ({ ...e, client: e.client || '', keep: Boolean(e.keep), expiresAt: e.keep ? null : expiryOf(e).toISOString() });
 
-export async function listImages({ limit = 50, query } = {}) {
+/** Tandai/lepas tanda simpan: hasil final klien yang perlu bertahan lebih dari masa retensi. */
+export function setKeep(id, keep) {
+  return locked(async () => {
+    const entries = await readIndex();
+    const e = entries.find((x) => x.id === id);
+    if (!e || isExpired(e)) return null;
+    e.keep = Boolean(keep);
+    if (!e.keep) e.expiresAt = new Date(Date.now() + config.retentionDays * 86400000).toISOString(); // mulai hitung mundur dari sekarang
+    await writeIndex(entries);
+    return withExpiry(e);
+  });
+}
+
+// client: undefined = semua; '' = hanya Teman Seller; 'Toko A' = hanya klien itu.
+export async function listImages({ limit = 50, query, client } = {}) {
   let entries = (await readIndex()).filter((e) => !isExpired(e)).map(withExpiry).reverse();
+  if (client !== undefined) entries = entries.filter((e) => sameClient(e.client, client));
   if (query) {
     const q = query.toLowerCase();
     entries = entries.filter((e) => `${e.title} ${e.prompt} ${e.file}`.toLowerCase().includes(q));

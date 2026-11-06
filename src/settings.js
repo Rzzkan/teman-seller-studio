@@ -11,6 +11,8 @@ export const defaults = () => ({
   dailyBudgetIdr: config.dailyBudgetIdr,
   weeklyBudgetIdr: config.weeklyBudgetIdr,
   monthlyBudgetIdr: config.monthlyBudgetIdr,
+  clientDailyBudgetIdr: 0, // batas harian PER KLIEN layanan (0 = tanpa batas); batas global tetap berlaku
+  clientMonthlyBudgetIdr: 0,
   approvalThresholdIdr: config.approvalThresholdIdr,
   maxN: config.maxN,
 });
@@ -20,6 +22,8 @@ const RULES = {
   dailyBudgetIdr: [0, 100_000_000],
   weeklyBudgetIdr: [0, 1_000_000_000],
   monthlyBudgetIdr: [0, 1_000_000_000],
+  clientDailyBudgetIdr: [0, 100_000_000],
+  clientMonthlyBudgetIdr: [0, 1_000_000_000],
   approvalThresholdIdr: [0, 100_000_000],
   maxN: [1, 10],
 };

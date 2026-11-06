@@ -77,7 +77,10 @@
             <label class="lbl">Ukuran (petunjuk)</label>
             <div id="g-sizes" class="mb-2 flex flex-wrap gap-2"></div>
             <input id="g-size" class="field" placeholder="1024x1024">
-            <label class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" id="g-style" checked class="h-4 w-4 accent-primary"> Pakai Style Guide Teman Seller</label>
+            <label class="lbl" for="g-client">Klien</label>
+            <select id="g-client" class="field"></select>
+            <p class="mt-1 text-xs">Klien dipilih = hanya Style Guide klien itu yang dipakai (gaya Teman Seller tidak ikut), gambar diberi label klien, biaya dihitung per klien.</p>
+            <label class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" id="g-style" checked class="h-4 w-4 accent-primary"> <span id="g-style-label">Pakai Style Guide Teman Seller</span></label>
             <label class="lbl" for="g-style-pick">Style content pillar</label>
             <select id="g-style-pick" class="field"></select>
             <label class="mt-2 flex items-center gap-2 text-sm"><input type="checkbox" id="g-opaque" class="h-4 w-4 accent-primary"> Latar transparan (PNG)</label>
@@ -109,6 +112,8 @@
               <div><label class="lbl" for="e-n">Jumlah</label><input id="e-n" type="number" min="1" value="1" class="field"></div>
               <div><label class="lbl" for="e-title">Judul file</label><input id="e-title" class="field" placeholder="Edit Maskot"></div>
             </div>
+            <label class="lbl" for="e-client">Klien</label>
+            <select id="e-client" class="field"></select>
             <label class="lbl" for="e-style-pick">Style Guide</label>
             <select id="e-style-pick" class="field"></select>
             <div id="e-est" class="mt-4 rounded-lg bg-graylight p-3 text-sm dark:bg-bodydark"></div>
@@ -122,7 +127,7 @@
 
       <!-- Galeri -->
       <section data-page="gal" hidden>
-        <div class="card mb-4"><input id="q" class="field" placeholder="Cari prompt atau nama file"></div>
+        <div class="card mb-4 grid gap-3 sm:grid-cols-3"><input id="q" class="field sm:col-span-2" placeholder="Cari prompt atau nama file"><select id="gal-client" class="field" aria-label="Filter klien"></select></div>
         <div id="gal-grid" class="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5"></div>
       </section>
 
@@ -198,6 +203,9 @@
             <label class="lbl" for="s-monthly">Batas bulanan (Rp)</label><input id="s-monthly" type="number" min="0" step="100" class="field">
             <label class="lbl" for="s-approval">Ambang persetujuan Owner per permintaan (Rp)</label><input id="s-approval" type="number" min="0" step="100" class="field">
             <p class="mt-1 text-xs">Permintaan yang biayanya di atas ambang butuh centang persetujuan Owner (web) atau <code>approved=true</code> (Claude). 0 = semua permintaan butuh persetujuan.</p>
+            <label class="lbl" for="s-cdaily">Batas harian PER KLIEN (Rp)</label><input id="s-cdaily" type="number" min="0" step="100" class="field">
+            <label class="lbl" for="s-cmonthly">Batas bulanan PER KLIEN (Rp)</label><input id="s-cmonthly" type="number" min="0" step="100" class="field">
+            <p class="mt-1 text-xs">Berlaku untuk tiap klien layanan, tambahan dari batas global di atas. 0 = tanpa batas per klien.</p>
             <label class="lbl" for="s-maxn">Maksimal gambar per permintaan (1-10)</label><input id="s-maxn" type="number" min="1" max="10" class="field">
             <div class="mt-4 flex items-center gap-3"><button class="btn" id="budget-save" type="submit">Simpan</button><button class="btn-ghost" id="budget-reset" type="button">Kembalikan ke nilai .env</button></div>
             <p id="budget-msg" class="mt-3 text-sm"></p>
@@ -205,6 +213,8 @@
           <div class="card">
             <h2 class="text-base font-semibold text-bodydark dark:text-white">Pemakaian saat ini (WIB)</h2>
             <div id="usage-list" class="mt-4 space-y-5 text-sm"></div>
+            <h3 class="mt-6 text-sm font-semibold text-bodydark dark:text-white">Biaya per klien</h3>
+            <div id="client-usage" class="mt-2 text-sm"></div>
             <p class="mt-5 text-xs">Catatan biaya tetap tersimpan walau gambarnya sudah dihapus otomatis, jadi total mingguan dan bulanan tetap akurat.</p>
             <p id="budget-key" class="mt-3 text-xs"></p>
           </div>
@@ -221,6 +231,8 @@
                 <p class="mt-1 text-sm">Satu <b>gaya dasar</b> yang selalu dipakai, ditambah gaya per content pillar yang dipilih saat generate.</p>
               </div>
             </div>
+            <label class="lbl" for="st-filter">Tampilkan Style Guide milik</label>
+            <select id="st-filter" class="field"></select>
             <div class="mt-4 flex flex-wrap gap-2">
               <button id="st-new" type="button" class="btn">+ Style baru</button>
               <button id="st-seed" type="button" class="btn-ghost">Buat dari 7 Content Pillar</button>
@@ -231,6 +243,10 @@
           <div class="card xl:col-span-2">
             <h2 id="st-title" class="text-base font-semibold text-bodydark dark:text-white">Style baru</h2>
             <p class="mt-1 text-sm">Teks ini otomatis ditambahkan ke prompt (warna, maskot orisinal, gaya garis, suasana). Diisi Kenzo, disetujui Owner.</p>
+            <label class="lbl" for="st-client">Klien (kosong = Teman Seller)</label>
+            <input id="st-client" class="field" maxlength="60" list="st-clients" placeholder="Contoh: Toko Hijab Ayu">
+            <datalist id="st-clients"></datalist>
+            <p class="mt-1 text-xs">Klien baru terdaftar otomatis saat Style Guide pertamanya disimpan. Klien tidak bisa diganti setelah dibuat. Isi gaya dasar klien dengan brand identity-nya (warna, gaya foto, nada visual).</p>
             <label class="lbl" for="st-name">Nama style</label>
             <input id="st-name" class="field" maxlength="60" placeholder="Contoh: Ngopi Dulu">
             <label class="lbl" for="st-pillar">Content pillar (opsional)</label>
@@ -283,7 +299,7 @@
     <p id="lb-url" class="mt-3 break-all text-xs text-primary"></p>
     <p id="lb-meta" class="mt-1 text-xs"></p>
     <p id="lb-prompt" class="mt-2 break-words text-sm"></p>
-    <div class="mt-3 flex flex-wrap gap-2"><button id="lb-edit" class="btn !px-3 !py-1.5">Edit</button><a id="lb-dl" class="btn-ghost !px-3 !py-1.5">Unduh</a><button id="lb-copy" class="btn-ghost !px-3 !py-1.5">Salin URL</button><button id="lb-share" class="btn-ghost !px-3 !py-1.5">Salin tautan publik (60 menit)</button></div>
+    <div class="mt-3 flex flex-wrap gap-2"><button id="lb-edit" class="btn !px-3 !py-1.5">Edit</button><a id="lb-dl" class="btn-ghost !px-3 !py-1.5">Unduh</a><button id="lb-keep" class="btn-ghost !px-3 !py-1.5">Simpan permanen</button><button id="lb-copy" class="btn-ghost !px-3 !py-1.5">Salin URL</button><button id="lb-share" class="btn-ghost !px-3 !py-1.5">Salin tautan publik (60 menit)</button></div>
     <p id="lb-msg" class="mt-2 text-xs"></p>
   </div>
 </div>

@@ -523,3 +523,133 @@ test('Style Guide: data lama (styles.json dan style.txt) dimigrasi ke database s
   assert.deepEqual(out, [['Dasar', 'T2', true], ['Ngopi Dulu', 'T1', false]]);
   assert.ok(existsSync(join(d2, 'styles.json.migrated')));
 });
+
+// ---- Layanan klien: Style Guide, galeri, biaya, dan retensi per klien ----
+const mcpClient = async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  const c = new Client({ name: 't', version: '1' });
+  await c.connect(new StreamableHTTPClientTransport(new URL(appBase + '/mcp'), { requestInit: { headers: { Authorization: 'Bearer rahasia' } } }));
+  return async (name, args) => { const r = await c.callTool({ name, arguments: args }); return { err: r.isError, text: r.content[0].text }; };
+};
+const freeModel = () => models.data.find((m) => m.id.endsWith(':free') && m.endpoints.includes('images')).id;
+
+test('klien: Style Guide terpisah, gaya Teman Seller tidak bocor ke gambar klien', async () => {
+  const call = await mcpClient();
+  await call('set_style_guide', { text: 'GAYA-INTERNAL-TS', base: true });                       // dasar Teman Seller
+  assert.ok(!(await call('set_style_guide', { client: 'Toko Ayu', text: 'MERAH-AYU', base: true })).err);
+  assert.ok(!(await call('set_style_guide', { client: 'Toko Budi', text: 'BIRU-BUDI', base: true })).err);
+  assert.ok(!(await call('set_style_guide', { client: 'Toko Ayu', name: 'Promo Ayu', pillar: 'Promo', text: 'DISKON-AYU' })).err);
+  // nama sama boleh dipakai klien berbeda; dasar tetap satu per klien
+  assert.ok(!(await call('set_style_guide', { client: 'Toko Budi', name: 'Promo Ayu', text: 'PROMO-BUDI' })).err);
+  const all = (await (await fetch(appBase + '/api/styles', { headers: H })).json());
+  assert.deepEqual(all.clients, ['Toko Ayu', 'Toko Budi']);
+  assert.equal(all.styles.filter((x) => x.base && x.client === 'Toko Ayu').length, 1);
+  assert.equal(all.styles.filter((x) => x.base && x.client === '').length, 1, 'dasar Teman Seller tidak terganggu');
+  assert.match((await call('list_style_guides', { client: 'Toko Ayu' })).text, /MERAH-AYU/);
+  assert.doesNotMatch((await call('list_style_guides', { client: 'Toko Ayu' })).text, /BIRU-BUDI|GAYA-INTERNAL-TS/);
+  assert.doesNotMatch((await call('list_style_guides', {})).text, /MERAH-AYU|BIRU-BUDI/, 'daftar internal tidak menampilkan klien');
+
+  const sent = () => decodeURIComponent(calls.at(-1).body);
+  const ok = await call('generate_image', { prompt: 'poster promo', client: 'Toko Ayu', style: 'Promo Ayu', model: freeModel(), return_images: false });
+  assert.ok(!ok.err, ok.text);
+  assert.match(sent(), /MERAH-AYU/); assert.match(sent(), /DISKON-AYU/);
+  assert.doesNotMatch(sent(), /BIRU-BUDI|PROMO-BUDI|GAYA-INTERNAL-TS/);
+  // gaya milik klien lain tidak bisa dipakai lewat nama
+  const cross = await call('generate_image', { prompt: 'x', client: 'Toko Ayu', style: 'Promo Budi', model: freeModel() });
+  assert.equal(cross.err, true);
+  // tanpa klien tetap gaya Teman Seller saja
+  await call('generate_image', { prompt: 'internal', model: freeModel(), return_images: false });
+  assert.match(sent(), /GAYA-INTERNAL-TS/); assert.doesNotMatch(sent(), /MERAH-AYU/);
+  // hapus + pulihkan dalam lingkup klien
+  assert.ok((await call('delete_style_guide', { client: 'Toko Ayu', name: 'Promo Ayu' })).err, 'butuh approved');
+  assert.ok(!(await call('delete_style_guide', { client: 'Toko Ayu', name: 'Promo Ayu', approved: true })).err);
+  assert.match((await call('get_style_guide', { client: 'Toko Budi', name: 'Promo Ayu' })).text, /PROMO-BUDI/, 'milik klien lain utuh');
+  assert.ok(!(await call('restore_style_guide', { client: 'Toko Ayu', name: 'Promo Ayu' })).err);
+  assert.match((await call('get_style_guide', { client: 'Toko Ayu', name: 'Promo Ayu' })).text, /DISKON-AYU/);
+});
+
+test('klien: galeri dilabeli dan bisa difilter, list_clients merekap gambar', async () => {
+  const call = await mcpClient();
+  const g = await (await post('/api/generate', { prompt: 'label klien', client: 'Toko Budi', useStyle: false, model: freeModel() })).json();
+  assert.equal(g.images[0].client, 'Toko Budi');
+  const only = await (await fetch(appBase + '/api/gallery?client=' + encodeURIComponent('toko budi'), { headers: H })).json();
+  assert.ok(only.length >= 1 && only.every((e) => e.client === 'Toko Budi'), 'filter tidak peduli huruf besar-kecil');
+  const internal = await (await fetch(appBase + '/api/gallery?client=-', { headers: H })).json();
+  assert.ok(internal.length >= 1 && internal.every((e) => e.client === ''));
+  const all = await (await fetch(appBase + '/api/gallery?limit=500', { headers: H })).json();
+  assert.ok(all.length > only.length + internal.length - 1);
+  const lc = await call('list_clients', {});
+  assert.match(lc.text, /Toko Budi \| \d+ style \| \d+ gambar/);
+  assert.match(lc.text, /Toko Ayu/);
+});
+
+test('klien: batas biaya per klien terpisah dari batas global, biaya tercatat per klien', async () => {
+  const before = (await (await fetch(appBase + '/api/settings', { headers: H })).json()).settings;
+  const put = (b) => fetch(appBase + '/api/settings', { method: 'PUT', headers: H, body: JSON.stringify(b) });
+  try {
+    assert.equal((await put({ dailyBudgetIdr: 0, weeklyBudgetIdr: 0, monthlyBudgetIdr: 0, approvalThresholdIdr: 100000, clientDailyBudgetIdr: 200 })).status, 200);
+    const paid = 'gpt-image-2'; // Rp125 per gambar
+    const one = await post('/api/generate', { prompt: 'klien berbayar', client: 'Toko Cici', useStyle: false, model: paid, n: 1 });
+    assert.equal(one.status, 200, await one.clone().text());
+    const two = await post('/api/generate', { prompt: 'klien berbayar lagi', client: 'Toko Cici', useStyle: false, model: paid, n: 1 });
+    assert.equal(two.status, 402, 'Rp125 + Rp125 melewati batas harian klien Rp200');
+    assert.match((await two.json()).error, /harian klien Toko Cici/);
+    // klien lain dan pekerjaan internal tidak terblokir
+    assert.equal((await post('/api/generate', { prompt: 'klien lain', client: 'Toko Dedi', useStyle: false, model: paid, n: 1 })).status, 200);
+    assert.equal((await post('/api/generate', { prompt: 'internal bayar', useStyle: false, model: paid, n: 1 })).status, 200);
+    const cfg = await (await fetch(appBase + '/api/config', { headers: H })).json();
+    assert.equal(cfg.byClient.find((x) => x.client === 'Toko Cici').today, 125);
+    assert.equal(cfg.byClient.find((x) => x.client === 'Toko Dedi').today, 125);
+    assert.ok(!cfg.byClient.some((x) => x.client === ''), 'Teman Seller tidak masuk rekap klien');
+    const est = await (await fetch(appBase + '/api/estimate?model=gpt-image-2&n=1&client=Toko%20Cici', { headers: H })).json();
+    assert.equal(est.spentClientTodayIdr, 125);
+    assert.match((await (await mcpClient())('list_clients', {})).text, /Toko Cici .*biaya hari ini Rp125/);
+  } finally {
+    await put({ dailyBudgetIdr: before.dailyBudgetIdr, weeklyBudgetIdr: before.weeklyBudgetIdr, monthlyBudgetIdr: before.monthlyBudgetIdr, approvalThresholdIdr: before.approvalThresholdIdr, clientDailyBudgetIdr: 0 });
+  }
+});
+
+test('retensi: gambar bertanda simpan tidak disapu; lepas tanda memulai hitung mundur', async () => {
+  const store = await import('../src/store.js');
+  const call = await mcpClient();
+  const g = await (await post('/api/generate', { prompt: 'final klien', client: 'Toko Ayu', useStyle: false, model: freeModel() })).json();
+  const id = g.images[0].id, file = g.images[0].file;
+  const k = await (await fetch(`${appBase}/api/gallery/${id}/keep`, { method: 'PUT', headers: H, body: JSON.stringify({ keep: true }) })).json();
+  assert.equal(k.keep, true); assert.equal(k.expiresAt, null);
+  const future = Date.now() + 30 * 86400000;                       // 30 hari lagi: yang tidak disimpan sudah kedaluwarsa
+  await store.sweep({ now: future });
+  assert.ok(await store.getImage(id), 'bertanda simpan: masih ada');
+  assert.ok(existsSync(store.imagePath(file)));
+  assert.match((await call('list_gallery', { client: 'Toko Ayu', limit: 5 })).text, /DISIMPAN/);
+  assert.match((await call('get_image_public_url', { id })).text, /source_url: https:\/\/studio\.example\.test\/p\//, 'tautan publik tetap dibuat tanpa tanggal kedaluwarsa gambar');
+  const un = await (await fetch(`${appBase}/api/gallery/${id}/keep`, { method: 'PUT', headers: H, body: JSON.stringify({ keep: false }) })).json();
+  assert.equal(un.keep, false); assert.ok(new Date(un.expiresAt) > new Date(), 'hitung mundur baru');
+  assert.equal((await fetch(`${appBase}/api/gallery/tidakada/keep`, { method: 'PUT', headers: H, body: '{}' })).status, 404);
+  assert.ok(!(await call('keep_image', { id })).err);
+  await store.sweep({ now: future });
+  assert.ok(await store.getImage(id), 'ditandai lagi lewat MCP');
+});
+
+test('migrasi: database Style Guide lama (tanpa kolom client) ditingkatkan tanpa kehilangan data', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { DatabaseSync } = await import('node:sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'mig3-'));
+  const d = new DatabaseSync(join(dir, 'studio.db'));
+  d.exec(`
+    CREATE TABLE styles (id TEXT PRIMARY KEY, name TEXT NOT NULL, pillar TEXT NOT NULL DEFAULT '', text TEXT NOT NULL DEFAULT '', base INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL DEFAULT 'web', deleted_at TEXT);
+    CREATE UNIQUE INDEX styles_name_live ON styles (lower(name)) WHERE deleted_at IS NULL;
+    CREATE TABLE style_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, style_id TEXT NOT NULL, name TEXT NOT NULL, pillar TEXT NOT NULL, text TEXT NOT NULL, base INTEGER NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, at TEXT NOT NULL);
+    INSERT INTO styles (id, name, pillar, text, base, updated_at) VALUES ('s1', 'Dasar Lama', '', 'TEKS-LAMA', 1, '2026-11-01T00:00:00Z');
+  `);
+  d.close();
+  const script = `const s = await import(${JSON.stringify(new URL('../src/styles.js', import.meta.url).href)});
+    s.create({ client: 'Klien Baru', name: 'Dasar Lama', text: 'BEDA', base: true });
+    console.log(JSON.stringify(s.list().map(x => [x.name, x.client, x.text, x.base])));
+    console.log(JSON.stringify(s.history('Dasar Lama', 5).map(r => r.client)));`;
+  const r = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { env: { ...process.env, DATA_DIR: dir }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const [rows, hist] = r.stdout.trim().split('\n');
+  assert.deepEqual(JSON.parse(rows), [['Dasar Lama', '', 'TEKS-LAMA', true], ['Dasar Lama', 'Klien Baru', 'BEDA', true]]);
+  assert.ok(JSON.parse(hist));
+});

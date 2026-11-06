@@ -89,12 +89,14 @@ export function createApp() {
   api.use(auth);
 
   api.get('/config', async (req, res) => {
-    const [st, u, w] = await Promise.all([settings.get(), store.usage(), who(req)]);
+    const [st, u, w, byClient] = await Promise.all([settings.get(), store.usage(), who(req), store.usageByClient()]);
     res.json({
       ...st,
       spentTodayIdr: u.today,
       spentWeekIdr: u.week,
       spentMonthIdr: u.month,
+      byClient,
+      clients: styles.clients(),
       weekStart: u.weekStart,
       monthStart: u.monthStart,
       hasApiKey: secrets.keyInfo().hasKey,
@@ -156,7 +158,7 @@ export function createApp() {
     try { res.json(await kenari.listImageModels({ force: req.query.refresh === '1' })); } catch (e) { next(e); }
   });
   api.get('/estimate', async (req, res, next) => {
-    try { res.json(await service.estimate({ model: req.query.model, n: req.query.n })); } catch (e) { next(e); }
+    try { res.json(await service.estimate({ model: req.query.model, n: req.query.n, client: req.query.client })); } catch (e) { next(e); }
   });
   api.post('/generate', async (req, res, next) => {
     try { res.json(await service.generateImages({ ...req.body, useStyle: req.body.useStyle ?? true, source: 'web' })); } catch (e) { next(e); }
@@ -177,9 +179,12 @@ export function createApp() {
     } catch (e) { next(e); }
   });
   api.get('/gallery', async (req, res, next) => {
-    try { res.json(await store.listImages({ limit: Number(req.query.limit) || 60, query: req.query.q })); } catch (e) { next(e); }
+    try { res.json(await store.listImages({ limit: Number(req.query.limit) || 60, query: req.query.q, client: req.query.client === undefined ? undefined : req.query.client === '-' ? '' : String(req.query.client) })); } catch (e) { next(e); }
   });
-  api.get('/styles', (_req, res) => res.json({ styles: styles.list(), pillars: styles.PILLAR_DRAFTS.map(([n]) => n) }));
+  api.put('/gallery/:id/keep', async (req, res, next) => {
+    try { const e = await store.setKeep(req.params.id, req.body?.keep !== false); e ? res.json(e) : res.status(404).json({ error: 'Gambar tidak ada atau sudah dihapus' }); } catch (e) { next(e); }
+  });
+  api.get('/styles', (_req, res) => res.json({ styles: styles.list(), clients: styles.clients(), pillars: styles.PILLAR_DRAFTS.map(([n]) => n) }));
   api.post('/styles/seed-pillars', (_req, res, next) => { try { res.json(styles.seedPillars()); } catch (e) { next(e); } });
   api.post('/styles', (req, res, next) => { try { res.status(201).json(styles.create(req.body || {})); } catch (e) { next(e); } });
   api.put('/styles/:id', (req, res, next) => { try { res.json(styles.update(req.params.id, req.body || {})); } catch (e) { next(e); } });
